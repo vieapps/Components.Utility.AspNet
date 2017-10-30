@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>VIEApps.Components.Utility.AspNet</id>
+    <version>10.1.0.1</version>
+    <authors>VIEApps.net</authors>
+    <owners>VIEApps.net</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectUrl>https://github.com/vieapps/Components.Utility.AspNet</projectUrl>
+    <description>The general purpose utility library for ASP.NET development</description>
+    <copyright>© 2017 VIEApps.net</copyright>
+    <tags>utility asp.net vieapps vieapps.components</tags>
+    <repository type="git" url="https://github.com/vieapps/Components.Utility.AspNet" />
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="Newtonsoft.Json" version="10.0.0.3" exclude="Build,Analyzers" />
+        <dependency id="System.Configuration.ConfigurationManager" version="4.4.0" exclude="Build,Analyzers" />
+        <dependency id="VIEApps.Components.Security" version="10.1.0.1" exclude="Build,Analyzers" />
+        <dependency id="VIEApps.Components.Utility" version="10.1.0.1" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="bin\Release\VIEApps.Components.Utility.AspNet.*" target="lib\net471" />
+  </files>
+</package>
