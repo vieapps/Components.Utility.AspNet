@@ -5,4 +5,4 @@ The general purpose utility library for ASP.NET development
 - ... and others
 
 ## Nuget
-https://www.nuget.org/packages/VIEApps.Components.Utiltiy.AspNet/
+https://www.nuget.org/packages/VIEApps.Components.Utility.AspNet/
