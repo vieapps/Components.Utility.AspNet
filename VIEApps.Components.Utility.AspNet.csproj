@@ -62,8 +62,11 @@
       <Version>2.0.1</Version>
     </PackageReference>
     <PackageReference Include="VIEApps.Components.Security">
-      <Version>10.1.0.3</Version>
+      <Version>10.1.1.1711</Version>
     </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="package.nuspec" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\..\packages\NETStandard.Library.2.0.1\build\netstandard2.0\NETStandard.Library.targets" Condition="Exists('..\..\packages\NETStandard.Library.2.0.1\build\netstandard2.0\NETStandard.Library.targets')" />
