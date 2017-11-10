@@ -2,19 +2,20 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
 	<metadata>
 		<id>VIEApps.Components.Utility.AspNet</id>
-		<version>10.1.1.1711</version>
+		<version>10.1.3.1712</version>
 		<authors>VIEApps.net</authors>
-		<owners>VIEApps.net</owners>
+		<copyright>© 2017 VIEApps.net</copyright>
+		<title>VIEApps NGX Utility for ASP.NET</title>
+		<description>The general purpose utility library for developing apps with ASP.NET</description>
+		<summary>The general purpose utility library for developing apps with ASP.NET</summary>
+		<tags>utility asp.net vieapps vieapps.components</tags>
 		<requireLicenseAcceptance>false</requireLicenseAcceptance>
 		<projectUrl>https://github.com/vieapps/Components.Utility.AspNet</projectUrl>
-		<description>The general purpose utility library for ASP.NET development</description>
-		<copyright>© 2017 VIEApps.net</copyright>
-		<tags>utility asp.net vieapps vieapps.components</tags>
 		<repository type="git" url="https://github.com/vieapps/Components.Utility.AspNet" />
 		<dependencies>
 			<group targetFramework=".NETStandard2.0">
-				<dependency id="VIEApps.Components.Security" version="10.1.1.1711" exclude="Build,Analyzers" />
-				<dependency id="VIEApps.Components.Utility" version="10.1.1.1711" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.Security" version="10.1.3.1712" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.Utility" version="10.1.3.1712" exclude="Build,Analyzers" />
 			</group>
 		</dependencies>
 	</metadata>

@@ -12,8 +12,6 @@
     <AssemblyName>VIEApps.Components.Utility.AspNet</AssemblyName>
     <TargetFrameworkVersion>v4.7.1</TargetFrameworkVersion>
     <TargetFrameworkProfile />
-    <NuGetPackageImportStamp>
-    </NuGetPackageImportStamp>
     <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -58,11 +56,8 @@
     <Compile Include="Utility.cs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="NETStandard.Library">
-      <Version>2.0.1</Version>
-    </PackageReference>
     <PackageReference Include="VIEApps.Components.Security">
-      <Version>10.1.1.1711</Version>
+      <Version>10.1.3.1712</Version>
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
