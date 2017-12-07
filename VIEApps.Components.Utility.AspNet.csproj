@@ -57,7 +57,10 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="VIEApps.Components.Security">
-      <Version>10.1.3.1712</Version>
+      <Version>10.1.4.1801-rc5</Version>
+    </PackageReference>
+    <PackageReference Include="VIEApps.Components.Utility">
+      <Version>10.1.4.1801-rc5</Version>
     </PackageReference>
   </ItemGroup>
   <ItemGroup>

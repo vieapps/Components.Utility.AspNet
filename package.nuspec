@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
 	<metadata>
 		<id>VIEApps.Components.Utility.AspNet</id>
-		<version>10.1.3.1712</version>
+		<version>10.1.4.1801-rc5</version>
 		<authors>VIEApps.net</authors>
 		<copyright>© 2017 VIEApps.net</copyright>
 		<title>VIEApps NGX Utility for ASP.NET</title>
@@ -14,12 +14,12 @@
 		<repository type="git" url="https://github.com/vieapps/Components.Utility.AspNet" />
 		<dependencies>
 			<group targetFramework=".NETStandard2.0">
-				<dependency id="VIEApps.Components.Security" version="10.1.3.1712" exclude="Build,Analyzers" />
-				<dependency id="VIEApps.Components.Utility" version="10.1.3.1712" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.Security" version="10.1.4.1801-rc5" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.Utility" version="10.1.4.1801-rc5" exclude="Build,Analyzers" />
 			</group>
 		</dependencies>
 	</metadata>
 	<files>
-		<file src="bin\Release\VIEApps.Components.Utility.AspNet.*" target="lib\net471" />
+		<file src="bin\Release\VIEApps.Components.Utility.AspNet.*" target="lib\net461" />
 	</files>
 </package>
