@@ -37,8 +37,7 @@ namespace net.vieapps.Components.Utility
 			if (!string.IsNullOrWhiteSpace(accessToken))
 				data.Add(new JProperty("AccessToken", accessToken));
 
-			var ticket = new FormsAuthenticationTicket(1, userID, DateTime.Now, DateTime.Now.AddMinutes(expiration > 0 ? expiration : 5), persistent, data.ToString(Formatting.None));
-			return FormsAuthentication.Encrypt(ticket);
+			return FormsAuthentication.Encrypt(new FormsAuthenticationTicket(1, userID, DateTime.Now, DateTime.Now.AddMinutes(expiration > 0 ? expiration : 5), persistent, data.ToString(Formatting.None)));
 		}
 
 		/// <summary>
