@@ -30,8 +30,7 @@ namespace net.vieapps.Components.Utility
 			get
 			{
 				var maxRequestLength = 30;
-				var httpRuntime = ConfigurationManager.GetSection("system.web/httpRuntime") as HttpRuntimeSection;
-				if (httpRuntime != null)
+				if (ConfigurationManager.GetSection("system.web/httpRuntime") is HttpRuntimeSection httpRuntime)
 					maxRequestLength = httpRuntime.MaxRequestLength / 1024;
 				return maxRequestLength;
 			}
@@ -75,7 +74,7 @@ namespace net.vieapps.Components.Utility
 		/// <returns></returns>
 		public static async Task WriteFileToOutputAsync(this HttpContext context, string filePath, string contentType, string eTag = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			await context.WriteFileToOutputAsync(new FileInfo(filePath), contentType, eTag, contentDisposition, cancellationToken);
+			await context.WriteFileToOutputAsync(new FileInfo(filePath), contentType, eTag, contentDisposition, cancellationToken).ConfigureAwait(false);
 		}
 
 		/// <summary>
@@ -93,9 +92,9 @@ namespace net.vieapps.Components.Utility
 			if (fileInfo == null || !fileInfo.Exists)
 				throw new FileNotFoundException("Not found" + (fileInfo != null ? " [" + fileInfo.Name + "]" : ""));
 
-			using (var stream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.Read))
+			using (var stream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
 			{
-				await context.WriteStreamToOutputAsync(stream, contentType, eTag, fileInfo.LastWriteTime.ToHttpString(), contentDisposition, 0, cancellationToken);
+				await context.WriteStreamToOutputAsync(stream, contentType, eTag, fileInfo.LastWriteTime.ToHttpString(), contentDisposition, 0, cancellationToken).ConfigureAwait(false);
 			}
 		}
 
@@ -114,7 +113,7 @@ namespace net.vieapps.Components.Utility
 		{
 			using (var stream = new MemoryStream(data))
 			{
-				await context.WriteStreamToOutputAsync(stream, contentType, eTag, lastModified, contentDisposition, 0, cancellationToken);
+				await context.WriteStreamToOutputAsync(stream, contentType, eTag, lastModified, contentDisposition, 0, cancellationToken).ConfigureAwait(false);
 			}
 		}
 
@@ -220,7 +219,7 @@ namespace net.vieapps.Components.Utility
 
 				headers.ForEach(header => context.Response.Headers.Add(header[0], header[1]));
 
-				await context.Response.FlushAsync();
+				await context.Response.FlushAsync().ConfigureAwait(false);
 			}
 			catch (HttpException ex)
 			{
@@ -239,12 +238,10 @@ namespace net.vieapps.Components.Utility
 				{
 					var isDisconnected = false;
 					var data = new byte[totalBytes];
-					var readBytes = totalBytes <= AspNetUtilityService.MinSmallFileSize
-						? stream.Read(data, 0, (int)totalBytes)
-						: await stream.ReadAsync(data, 0, (int)totalBytes, cancellationToken);
+					var readBytes = await stream.ReadAsync(data, 0, (int)totalBytes, cancellationToken).ConfigureAwait(false);
 					try
 					{
-						await context.Response.OutputStream.WriteAsync(data, 0, readBytes, cancellationToken);
+						await context.Response.OutputStream.WriteAsync(data, 0, readBytes, cancellationToken).ConfigureAwait(false);
 					}
 					catch (OperationCanceledException)
 					{
@@ -263,16 +260,14 @@ namespace net.vieapps.Components.Utility
 
 					// flush the written buffer to client and update cache
 					if (!isDisconnected)
-					{
 						try
 						{
-							await context.Response.FlushAsync();
+							await context.Response.FlushAsync().ConfigureAwait(false);
 						}
 						catch (Exception)
 						{
 							throw;
 						}
-					}
 				}
 				catch (Exception)
 				{
@@ -303,13 +298,13 @@ namespace net.vieapps.Components.Utility
 						try
 						{
 							var buffer = new byte[packSize];
-							var readBytes = await stream.ReadAsync(buffer, 0, packSize, cancellationToken);
+							var readBytes = await stream.ReadAsync(buffer, 0, packSize, cancellationToken).ConfigureAwait(false);
 							if (readBytes > 0)
 							{
 								// write data to output stream
 								try
 								{
-									await context.Response.OutputStream.WriteAsync(buffer, 0, readBytes, cancellationToken);
+									await context.Response.OutputStream.WriteAsync(buffer, 0, readBytes, cancellationToken).ConfigureAwait(false);
 								}
 								catch (OperationCanceledException)
 								{
@@ -333,7 +328,7 @@ namespace net.vieapps.Components.Utility
 								if (!isDisconnected)
 									try
 									{
-										await context.Response.FlushAsync();
+										await context.Response.FlushAsync().ConfigureAwait(false);
 									}
 									catch (Exception ex)
 									{
@@ -419,6 +414,40 @@ namespace net.vieapps.Components.Utility
 			if (!string.IsNullOrWhiteSpace(stack) && showStack)
 				context.Response.Output.Write("<div><br/>Stack:</div>\r\n<blockquote>" + stack.Replace("<", "&lt;").Replace(">", "&gt;").Replace("\n", "<br/>").Replace("\r", "").Replace("\t", "") + "</blockquote>\r\n");
 			context.Response.Output.Write("</body>\r\n</html>");
+
+			if (message.IsContains("potentially dangerous"))
+				context.Response.End();
+		}
+
+		/// <summary>
+		/// Show HTTP error
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="code"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="stack"></param>
+		/// <param name="showStack"></param>
+		public static async Task ShowHttpErrorAsync(this HttpContext context, int code, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
+		{
+			code = code < 1 ? (int)HttpStatusCode.InternalServerError : code;
+
+			context.Response.TrySkipIisCustomErrors = true;
+			context.Response.StatusCode = code;
+			context.Response.Cache.SetNoStore();
+			context.Response.ContentType = "text/html";
+
+			context.Response.ClearContent();
+			await context.Response.Output.WriteAsync("<!DOCTYPE html>\r\n").ConfigureAwait(false);
+			await context.Response.Output.WriteAsync("<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n").ConfigureAwait(false);
+			await context.Response.Output.WriteAsync("<head><title>Error " + code.ToString() + "</title></head>\r\n<body>\r\n").ConfigureAwait(false);
+			await context.Response.Output.WriteAsync("<h1>HTTP " + code.ToString() + " - " + message.Replace("<", "&lt;").Replace(">", "&gt;") + "</h1>\r\n").ConfigureAwait(false);
+			await context.Response.Output.WriteAsync("<hr/>\r\n").ConfigureAwait(false);
+			await context.Response.Output.WriteAsync("<div>Type: " + type + (!string.IsNullOrWhiteSpace(correlationID) ? " - Correlation ID: " + correlationID : "") + "</div>\r\n").ConfigureAwait(false);
+			if (!string.IsNullOrWhiteSpace(stack) && showStack)
+				await context.Response.Output.WriteAsync("<div><br/>Stack:</div>\r\n<blockquote>" + stack.Replace("<", "&lt;").Replace(">", "&gt;").Replace("\n", "<br/>").Replace("\r", "").Replace("\t", "") + "</blockquote>\r\n").ConfigureAwait(false);
+			await context.Response.Output.WriteAsync("</body>\r\n</html>").ConfigureAwait(false);
 
 			if (message.IsContains("potentially dangerous"))
 				context.Response.End();
