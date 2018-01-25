@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
@@ -18,7 +19,7 @@ namespace net.vieapps.Components.Utility
 	/// <summary>
 	/// Static servicing methods for working with ASP.NET
 	/// </summary>
-	public static class AspNetUtilityService
+	public static partial class AspNetUtilityService
 	{
 
 		#region Write file to HTTP output stream directly
@@ -350,6 +351,37 @@ namespace net.vieapps.Components.Utility
 					}
 				}
 			}
+		}
+		#endregion
+
+		#region Write a data-set as Excel document to HTTP output stream directly
+		/// <summary>
+		/// Writes a data-set as Excel document to HTTP output stream directly
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="dataSet"></param>
+		/// <param name="filename"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static async Task WriteAsExcelDocumentAsync(this HttpContext context, DataSet dataSet, string filename = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			using (var stream = await dataSet.CreateExcelStreamAsync(cancellationToken).ConfigureAwait(false))
+			{
+				filename = filename ?? dataSet.Tables[0].TableName + ".xlsx";
+				await context.WriteStreamToOutputAsync(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", null, null, filename, TextFileReader.BufferSize, cancellationToken).ConfigureAwait(false);
+			}
+		}
+
+		/// <summary>
+		/// Writes a data-set as Excel document to HTTP output stream directly
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="dataSet"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsExcelDocumentAsync(this HttpContext context, DataSet dataSet, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return context.WriteAsExcelDocumentAsync(dataSet, null, cancellationToken);
 		}
 		#endregion
 

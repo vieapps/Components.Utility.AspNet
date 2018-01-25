@@ -48,6 +48,7 @@
     <AssemblyOriginatorKeyFile>../VIEApps.Components.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="System.Data" />
     <Reference Include="System.Web" />
   </ItemGroup>
   <ItemGroup>
@@ -62,10 +63,10 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="VIEApps.Components.Security">
-      <Version>10.1.6.1801</Version>
+      <Version>10.1.7.1802-rc</Version>
     </PackageReference>
     <PackageReference Include="VIEApps.Components.Utility">
-      <Version>10.1.6.1801</Version>
+      <Version>10.1.7.1802-rc</Version>
     </PackageReference>
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
