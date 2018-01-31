@@ -22,7 +22,7 @@ namespace net.vieapps.Components.Utility
 	public static partial class AspNetUtilityService
 	{
 
-		#region Write file to HTTP output stream directly
+		#region Write a file to HTTP output stream directly
 		/// <summary>
 		/// Gets max request length (defined in 'system.web/httpRuntime' section of web.config file)
 		/// </summary>
