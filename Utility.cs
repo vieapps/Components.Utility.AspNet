@@ -385,7 +385,7 @@ namespace net.vieapps.Components.Utility
 		}
 		#endregion
 
-		#region Http errors
+		#region HTTP Errors
 		/// <summary>
 		/// Gets the approriate HTTP Status Code of the exception
 		/// </summary>

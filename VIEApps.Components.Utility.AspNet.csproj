@@ -61,10 +61,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="VIEApps.Components.Security">
-      <Version>10.1.7.1802</Version>
-    </PackageReference>
-    <PackageReference Include="VIEApps.Components.Utility">
-      <Version>10.1.7.1802</Version>
+      <Version>10.1.8.1802</Version>
     </PackageReference>
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
