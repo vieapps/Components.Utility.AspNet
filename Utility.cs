@@ -365,7 +365,7 @@ namespace net.vieapps.Components.Utility
 		/// <returns></returns>
 		public static async Task WriteAsExcelDocumentAsync(this HttpContext context, DataSet dataSet, string filename = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			using (var stream = await dataSet.CreateExcelStreamAsync(cancellationToken).ConfigureAwait(false))
+			using (var stream = await dataSet.SaveAsExcelStreamAsync(cancellationToken).ConfigureAwait(false))
 			{
 				filename = filename ?? dataSet.Tables[0].TableName + ".xlsx";
 				await context.WriteStreamToOutputAsync(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", null, null, filename, TextFileReader.BufferSize, cancellationToken).ConfigureAwait(false);
