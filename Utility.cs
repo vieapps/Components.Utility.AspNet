@@ -1,7 +1,5 @@
 ﻿#region Related components
 using System;
-using System.Configuration;
-using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -9,9 +7,16 @@ using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using System.Web.WebSockets;
 using System.Web.Configuration;
+using System.Configuration;
+using System.Collections.Generic;
+using System.Diagnostics;
+
+using Microsoft.Extensions.DependencyInjection;
 
 using net.vieapps.Components.Security;
+using net.vieapps.Components.WebSockets;
 #endregion
 
 namespace net.vieapps.Components.Utility
@@ -22,24 +27,72 @@ namespace net.vieapps.Components.Utility
 	public static partial class AspNetUtilityService
 	{
 
-		#region Write a file to HTTP output stream directly
+		#region HTTP Response extensions
 		/// <summary>
-		/// Gets max request length (defined in 'system.web/httpRuntime' section of web.config file)
+		/// Writes the array of bytes to HttpResponse Output Stream
 		/// </summary>
-		public static int MaxRequestLength
+		/// <param name="response"></param>
+		/// <param name="data"></param>
+		/// <param name="offset"></param>
+		/// <param name="count"></param>
+		public static void Write(this HttpResponse response, byte[] data, int offset = 0, int count = 0)
 		{
-			get
-			{
-				var maxRequestLength = 30;
-				if (ConfigurationManager.GetSection("system.web/httpRuntime") is HttpRuntimeSection httpRuntime)
-					maxRequestLength = httpRuntime.MaxRequestLength / 1024;
-				return maxRequestLength;
-			}
+			response.OutputStream.Write(data, offset > -1 ? offset : 0, count > 0 ? count : data.Length);
 		}
 
+		/// <summary>
+		/// Writes the array segment of bytes to HttpResponse Output Stream
+		/// </summary>
+		/// <param name="response"></param>
+		/// <param name="data"></param>
+		/// <returns></returns>
+		public static void Write(this HttpResponse response, ArraySegment<byte> data)
+		{
+			response.OutputStream.Write(data.Array, data.Offset, data.Count);
+		}
+
+		/// <summary>
+		/// Writes the array of bytes to HttpResponse Output Stream
+		/// </summary>
+		/// <param name="response"></param>
+		/// <param name="data"></param>
+		/// <param name="offset"></param>
+		/// <param name="count"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpResponse response, byte[] data, int offset = 0, int count = 0, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return response.OutputStream.WriteAsync(data, offset > -1 ? offset : 0, count > 0 ? count : data.Length, cancellationToken);
+		}
+
+		/// <summary>
+		/// Writes the array segment of bytes to HttpResponse Output Stream
+		/// </summary>
+		/// <param name="response"></param>
+		/// <param name="data"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpResponse response, ArraySegment<byte> data, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return response.OutputStream.WriteAsync(data.Array, data.Offset, data.Count, cancellationToken);
+		}
+		#endregion
+
+		#region Write a file to HTTP output stream directly
 		internal static long MinSmallFileSize = 1024 * 40;                             // 40 KB
 		internal static long MaxSmallFileSize = 1024 * 1024 * 2;                // 02 MB
-		internal static long MaxAllowedSize = AspNetUtilityService.MaxRequestLength * 1024 * 1024;
+
+		/// <summary>
+		/// Gets max length of body request
+		/// </summary>
+		/// <param name="context"></param>
+		/// <returns></returns>
+		public static long GetBodyRequestMaxLength(this HttpContext context)
+		{
+			return ConfigurationManager.GetSection("system.web/httpRuntime") is HttpRuntimeSection httpRuntime
+				? httpRuntime.MaxRequestLength.CastAs<long>()
+				: Int64.MaxValue;
+		}
 
 		static string GetRequestETag(HttpContext context)
 		{
@@ -134,7 +187,7 @@ namespace net.vieapps.Components.Utility
 		{
 			// validate whether the file is too large
 			var totalBytes = stream.Length;
-			if (totalBytes > AspNetUtilityService.MaxAllowedSize)
+			if (totalBytes > context.GetBodyRequestMaxLength())
 			{
 				context.Response.StatusCode = (int)HttpStatusCode.RequestEntityTooLarge;
 				context.Response.StatusDescription = "Request Entity Too Large";
@@ -156,12 +209,12 @@ namespace net.vieapps.Components.Utility
 			// prepare position for flushing as partial blocks
 			var flushAsPartialContent = false;
 			long startBytes = 0, endBytes = totalBytes - 1;
-			if (context.Request.Headers["Range"] != null)
+			if (!string.IsNullOrWhiteSpace(context.Request.Headers["Range"]))
 			{
 				var requestedRange = context.Request.Headers["Range"];
 				var range = requestedRange.Split(new char[] { '=', '-' });
 
-				startBytes = Convert.ToInt64(range[1]);
+				startBytes = range[1].CastAs<long>();
 				if (startBytes >= totalBytes)
 				{
 					context.Response.StatusCode = (int)HttpStatusCode.PreconditionFailed;
@@ -176,9 +229,10 @@ namespace net.vieapps.Components.Utility
 
 				try
 				{
-					endBytes = Convert.ToInt64(range[2]);
+					endBytes = range[2].CastAs<long>();
 				}
 				catch { }
+
 				if (endBytes > totalBytes - 1)
 					endBytes = totalBytes - 1;
 			}
@@ -220,7 +274,7 @@ namespace net.vieapps.Components.Utility
 
 				headers.ForEach(header => context.Response.Headers.Add(header[0], header[1]));
 
-				await context.Response.FlushAsync().ConfigureAwait(false);
+				await context.Response.FlushAsync().WithCancellationToken(cancellationToken).ConfigureAwait(false);
 			}
 			catch (HttpException ex)
 			{
@@ -242,7 +296,7 @@ namespace net.vieapps.Components.Utility
 					var readBytes = await stream.ReadAsync(data, 0, (int)totalBytes, cancellationToken).ConfigureAwait(false);
 					try
 					{
-						await context.Response.OutputStream.WriteAsync(data, 0, readBytes, cancellationToken).ConfigureAwait(false);
+						await context.Response.WriteAsync(data, 0, readBytes, cancellationToken).ConfigureAwait(false);
 					}
 					catch (OperationCanceledException)
 					{
@@ -263,7 +317,7 @@ namespace net.vieapps.Components.Utility
 					if (!isDisconnected)
 						try
 						{
-							await context.Response.FlushAsync().ConfigureAwait(false);
+							await context.Response.FlushAsync().WithCancellationToken(cancellationToken).ConfigureAwait(false);
 						}
 						catch (Exception)
 						{
@@ -305,7 +359,7 @@ namespace net.vieapps.Components.Utility
 								// write data to output stream
 								try
 								{
-									await context.Response.OutputStream.WriteAsync(buffer, 0, readBytes, cancellationToken).ConfigureAwait(false);
+									await context.Response.WriteAsync(buffer, 0, readBytes, cancellationToken).ConfigureAwait(false);
 								}
 								catch (OperationCanceledException)
 								{
@@ -329,7 +383,7 @@ namespace net.vieapps.Components.Utility
 								if (!isDisconnected)
 									try
 									{
-										await context.Response.FlushAsync().ConfigureAwait(false);
+										await context.Response.FlushAsync().WithCancellationToken(cancellationToken).ConfigureAwait(false);
 									}
 									catch (Exception ex)
 									{
@@ -365,7 +419,7 @@ namespace net.vieapps.Components.Utility
 		/// <returns></returns>
 		public static async Task WriteAsExcelDocumentAsync(this HttpContext context, DataSet dataSet, string filename = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			using (var stream = await dataSet.SaveAsExcelStreamAsync(cancellationToken).ConfigureAwait(false))
+			using (var stream = await dataSet.SaveAsExcelAsync(cancellationToken).ConfigureAwait(false))
 			{
 				filename = filename ?? dataSet.Tables[0].TableName + ".xlsx";
 				await context.WriteStreamToOutputAsync(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", null, null, filename, TextFileReader.BufferSize, cancellationToken).ConfigureAwait(false);
@@ -385,7 +439,147 @@ namespace net.vieapps.Components.Utility
 		}
 		#endregion
 
-		#region HTTP Errors
+		#region Write a text content to HTTP output stream
+		/// <summary>
+		/// Gets the approriate headers
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="contentLength"></param>
+		/// <param name="contentType"></param>
+		/// <param name="contentEncoding"></param>
+		/// <param name="eTag"></param>
+		/// <param name="lastModified"></param>
+		/// <param name="correlationID"></param>
+		/// <returns></returns>
+		public static Dictionary<string, string> GetHeaders(this HttpContext context, int contentLength, string contentType, string contentEncoding = null, string eTag = null, string lastModified = null, string correlationID = null)
+		{
+			var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				{ "Server", "VIEApps NGX" },
+				{ "Content-Length", $"{contentLength}" },
+				{ "Content-Type", $"{contentType}; charset=utf-8" }
+			};
+
+			if (!string.IsNullOrWhiteSpace(contentEncoding))
+				headers.Add("Content-Encoding", contentEncoding);
+
+			if (!string.IsNullOrWhiteSpace(eTag) && !string.IsNullOrWhiteSpace(lastModified))
+			{
+				headers.Add("ETag", "\"" + eTag + "\"");
+				headers.Add("Last-Modified", lastModified);
+			}
+
+			if (context.Items.Contains("Stopwatch"))
+			{
+				(context.Items["Stopwatch"] as Stopwatch).Stop();
+				var executionTimes = (context.Items["Stopwatch"] as Stopwatch).GetElapsedTimes();
+				headers.Add("X-Execution-Times", executionTimes);
+			}
+
+			if (!string.IsNullOrWhiteSpace(correlationID))
+				headers.Add("X-Correlation-ID", correlationID);
+
+			return headers;
+		}
+
+		/// <summary>
+		/// Writes a string content to HTTP output stream
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="content"></param>
+		/// <param name="contentType"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="eTag"></param>
+		/// <param name="lastModified"></param>
+		/// <param name="correlationID"></param>
+		public static void Write(this HttpContext context, string content, string contentType, int statusCode, string eTag, string lastModified, string correlationID = null)
+		{
+			var data = content.ToBytes();
+			var contentEncoding = context.Request.Headers["Accept-Encoding"];
+			if (contentEncoding != null && contentEncoding.IsEquals("*") || contentEncoding.IsContains("deflate"))
+			{
+				contentEncoding = "deflate";
+				data = data.Compress(contentEncoding);
+			}
+			else if (contentEncoding != null && contentEncoding.IsContains("gzip"))
+			{
+				contentEncoding = "gzip";
+				data = data.Compress(contentEncoding);
+			}
+
+			// write headers
+			var headers = context.GetHeaders(data.Length, contentType, contentEncoding, eTag, lastModified, correlationID);
+			headers.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
+
+			// write details
+			context.Response.StatusCode = statusCode;
+			context.Response.ClearContent();
+			context.Response.Write(data);
+		}
+
+		/// <summary>
+		/// Writes a string content to HTTP output stream
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="content"></param>
+		/// <param name="contentType"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="correlationID"></param>
+		public static void Write(this HttpContext context, string content, string contentType, int statusCode, string correlationID = null)
+		{
+			context.Write(content, contentType, statusCode, null, null, correlationID);
+		}
+
+		/// <summary>
+		/// Writes a string content to HTTP output stream
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="content"></param>
+		/// <param name="contentType"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="eTag"></param>
+		/// <param name="lastModified"></param>
+		/// <param name="correlationID"></param>
+		public static async Task WriteAsync(this HttpContext context, string content, string contentType, int statusCode, string eTag, string lastModified, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var data = content.ToBytes();
+			var contentEncoding = context.Request.Headers["Accept-Encoding"];
+			if (contentEncoding != null && contentEncoding.IsEquals("*") || contentEncoding.IsContains("deflate"))
+			{
+				contentEncoding = "deflate";
+				data = data.Compress(contentEncoding);
+			}
+			else if (contentEncoding != null && contentEncoding.IsContains("gzip"))
+			{
+				contentEncoding = "gzip";
+				data = data.Compress(contentEncoding);
+			}
+
+			// write headers
+			var headers = context.GetHeaders(data.Length, contentType, contentEncoding, eTag, lastModified, correlationID);
+			headers.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
+
+			// write details
+			context.Response.StatusCode = statusCode;
+			context.Response.ClearContent();
+			await context.Response.WriteAsync(data.ToArraySegment(), cancellationToken).ConfigureAwait(false);
+		}
+
+		/// <summary>
+		/// Writes a string content to HTTP output stream
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="content"></param>
+		/// <param name="contentType"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="correlationID"></param>
+		public static Task WriteAsync(this HttpContext context, string content, string contentType = "text/html", int statusCode = 200, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return context.WriteAsync(content, contentType, statusCode, null, null, correlationID, cancellationToken);
+		}
+		#endregion
+
+		#region Show HTTP Errors
 		/// <summary>
 		/// Gets the approriate HTTP Status Code of the exception
 		/// </summary>
@@ -417,36 +611,36 @@ namespace net.vieapps.Components.Utility
 			return (int)HttpStatusCode.InternalServerError;
 		}
 
+		static string GetHttpErrorHtml(this HttpContext context, int statusCode, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
+		{
+			var html = "<!DOCTYPE html>\r\n" +
+				$"<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n" +
+				$"<head><title>Error {statusCode}</title></head>\r\n<body>\r\n" +
+				$"<h1>HTTP {statusCode} - {message.Replace("<", "&lt;").Replace(">", "&gt;")}</h1>\r\n" +
+				$"<hr/>\r\n" +
+				$"<div>Type: {type} {(!string.IsNullOrWhiteSpace(correlationID) ? " - Correlation ID: " + correlationID : "")}</div>\r\n";
+			if (!string.IsNullOrWhiteSpace(stack) && showStack)
+				html += $"<div><br/>Stack:</div>\r\n<blockquote>{stack.Replace("<", "&lt;").Replace(">", "&gt;").Replace("\n", "<br/>").Replace("\r", "").Replace("\t", "")}</blockquote>\r\n";
+			html += "</body>\r\n</html>";
+			return html;
+		}
+
 		/// <summary>
 		/// Show HTTP error
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="code"></param>
+		/// <param name="statusCode"></param>
 		/// <param name="message"></param>
 		/// <param name="type"></param>
 		/// <param name="correlationID"></param>
 		/// <param name="stack"></param>
 		/// <param name="showStack"></param>
-		public static void ShowHttpError(this HttpContext context, int code, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
+		public static void ShowHttpError(this HttpContext context, int statusCode, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
 		{
-			code = code < 1 ? (int)HttpStatusCode.InternalServerError : code;
-
+			statusCode = statusCode < 1 ? (int)HttpStatusCode.InternalServerError : statusCode;
 			context.Response.TrySkipIisCustomErrors = true;
-			context.Response.StatusCode = code;
 			context.Response.Cache.SetNoStore();
-			context.Response.ContentType = "text/html";
-
-			context.Response.ClearContent();
-			context.Response.Output.Write("<!DOCTYPE html>\r\n");
-			context.Response.Output.Write("<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n");
-			context.Response.Output.Write("<head><title>Error " + code.ToString() + "</title></head>\r\n<body>\r\n");
-			context.Response.Output.Write("<h1>HTTP " + code.ToString() + " - " + message.Replace("<", "&lt;").Replace(">", "&gt;") + "</h1>\r\n");
-			context.Response.Output.Write("<hr/>\r\n");
-			context.Response.Output.Write("<div>Type: " + type + (!string.IsNullOrWhiteSpace(correlationID) ? " - Correlation ID: " + correlationID : "") + "</div>\r\n");
-			if (!string.IsNullOrWhiteSpace(stack) && showStack)
-				context.Response.Output.Write("<div><br/>Stack:</div>\r\n<blockquote>" + stack.Replace("<", "&lt;").Replace(">", "&gt;").Replace("\n", "<br/>").Replace("\r", "").Replace("\t", "") + "</blockquote>\r\n");
-			context.Response.Output.Write("</body>\r\n</html>");
-
+			context.Write(context.GetHttpErrorHtml(statusCode, message, type, correlationID, stack, showStack), "text/html", statusCode, correlationID);
 			if (message.IsContains("potentially dangerous"))
 				context.Response.End();
 		}
@@ -455,34 +649,126 @@ namespace net.vieapps.Components.Utility
 		/// Show HTTP error
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="code"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="ex"></param>
+		/// <param name="showStack"></param>
+		public static void ShowHttpError(this HttpContext context, int statusCode, string message, string type, string correlationID, Exception ex, bool showStack = true)
+		{
+			var stack = string.Empty;
+			if (ex != null && showStack)
+			{
+				stack = ex.StackTrace;
+				var counter = 1;
+				var inner = ex.InnerException;
+				while (inner != null)
+				{
+					stack += "\r\n" + $" ---- Inner [{counter}] -------------------------------------- " + "\r\n" + inner.StackTrace;
+					inner = inner.InnerException;
+					counter++;
+				}
+			}
+			context.ShowHttpError(statusCode, message, type, correlationID, stack, showStack);
+		}
+
+		/// <summary>
+		/// Show HTTP error
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="statusCode"></param>
 		/// <param name="message"></param>
 		/// <param name="type"></param>
 		/// <param name="correlationID"></param>
 		/// <param name="stack"></param>
 		/// <param name="showStack"></param>
-		public static async Task ShowHttpErrorAsync(this HttpContext context, int code, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
+		/// <param name="cancellationToken"></param>
+		public static async Task ShowHttpErrorAsync(this HttpContext context, int statusCode, string message, string type, string correlationID = null, string stack = null, bool showStack = true, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			code = code < 1 ? (int)HttpStatusCode.InternalServerError : code;
-
+			statusCode = statusCode < 1 ? (int)HttpStatusCode.InternalServerError : statusCode;
 			context.Response.TrySkipIisCustomErrors = true;
-			context.Response.StatusCode = code;
 			context.Response.Cache.SetNoStore();
-			context.Response.ContentType = "text/html";
-
-			context.Response.ClearContent();
-			await context.Response.Output.WriteAsync("<!DOCTYPE html>\r\n").ConfigureAwait(false);
-			await context.Response.Output.WriteAsync("<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n").ConfigureAwait(false);
-			await context.Response.Output.WriteAsync("<head><title>Error " + code.ToString() + "</title></head>\r\n<body>\r\n").ConfigureAwait(false);
-			await context.Response.Output.WriteAsync("<h1>HTTP " + code.ToString() + " - " + message.Replace("<", "&lt;").Replace(">", "&gt;") + "</h1>\r\n").ConfigureAwait(false);
-			await context.Response.Output.WriteAsync("<hr/>\r\n").ConfigureAwait(false);
-			await context.Response.Output.WriteAsync("<div>Type: " + type + (!string.IsNullOrWhiteSpace(correlationID) ? " - Correlation ID: " + correlationID : "") + "</div>\r\n").ConfigureAwait(false);
-			if (!string.IsNullOrWhiteSpace(stack) && showStack)
-				await context.Response.Output.WriteAsync("<div><br/>Stack:</div>\r\n<blockquote>" + stack.Replace("<", "&lt;").Replace(">", "&gt;").Replace("\n", "<br/>").Replace("\r", "").Replace("\t", "") + "</blockquote>\r\n").ConfigureAwait(false);
-			await context.Response.Output.WriteAsync("</body>\r\n</html>").ConfigureAwait(false);
-
+			await context.WriteAsync(context.GetHttpErrorHtml(statusCode, message, type, correlationID, stack, showStack), "text/html", statusCode, correlationID, cancellationToken).ConfigureAwait(false);
 			if (message.IsContains("potentially dangerous"))
 				context.Response.End();
+		}
+
+		/// <summary>
+		/// Show HTTP error
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="ex"></param>
+		/// <param name="showStack"></param>
+		/// <param name="cancellationToken"></param>
+		public static Task ShowHttpErrorAsync(this HttpContext context, int statusCode, string message, string type, string correlationID, Exception ex, bool showStack = true, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var stack = string.Empty;
+			if (ex != null && showStack)
+			{
+				stack = ex.StackTrace;
+				var counter = 1;
+				var inner = ex.InnerException;
+				while (inner != null)
+				{
+					stack += "\r\n" + $" ---- Inner [{counter}] -------------------------------------- " + "\r\n" + inner.StackTrace;
+					inner = inner.InnerException;
+					counter++;
+				}
+			}
+			return context.ShowHttpErrorAsync(statusCode, message, type, correlationID, stack, showStack, cancellationToken);
+		}
+		#endregion
+
+		#region Wrap a WebSocket connection of ASP.NET into WebSocket component
+		/// <summary>
+		/// Wraps a WebSocket connection
+		/// </summary>
+		/// <param name="websocket"></param>
+		/// <param name="context"></param>
+		/// <returns></returns>
+		public static Task WrapAsync(this WebSocket websocket, AspNetWebSocketContext context)
+		{
+			var serviceProvider = (IServiceProvider)HttpContext.Current;
+			var httpWorker = serviceProvider?.GetService<HttpWorkerRequest>();
+			var remoteAddress = httpWorker == null ? context.UserHostAddress : httpWorker.GetRemoteAddress();
+			var remotePort = httpWorker == null ? 0 : httpWorker.GetRemotePort();
+			var remoteEndpoint = IPAddress.TryParse(remoteAddress, out IPAddress ipAddress)
+				? new IPEndPoint(ipAddress, remotePort > 0 ? remotePort : context.RequestUri.Port) as EndPoint
+				: new DnsEndPoint(context.UserHostName, remotePort > 0 ? remotePort : context.RequestUri.Port) as EndPoint;
+			var localAddress = httpWorker == null ? context.RequestUri.Host : httpWorker.GetLocalAddress();
+			var localPort = httpWorker == null ? 0 : httpWorker.GetLocalPort();
+			var localEndpoint = IPAddress.TryParse(localAddress, out ipAddress)
+				? new IPEndPoint(ipAddress, localPort > 0 ? localPort : context.RequestUri.Port) as EndPoint
+				: new DnsEndPoint(context.RequestUri.Host, localPort > 0 ? localPort : context.RequestUri.Port) as EndPoint;
+			return websocket.WrapAsync(context.WebSocket, context.RequestUri, remoteEndpoint, localEndpoint);
+		}
+
+		/// <summary>
+		/// Wraps a WebSocket connection
+		/// </summary>
+		/// <param name="websocket"></param>
+		/// <param name="context"></param>
+		/// <returns></returns>
+		public static Task WrapWebSocketAsync(this WebSocket websocket, AspNetWebSocketContext context)
+		{
+			return websocket.WrapAsync(context);
+		}
+		#endregion
+
+		#region Parse the query string of an uri
+		/// <summary>
+		/// Parses the query of an uri
+		/// </summary>
+		/// <param name="uri"></param>
+		/// <returns>The collection of key and value pair</returns>
+		public static Dictionary<string, string> ParseQuery(this Uri uri)
+		{
+			return HttpUtility.ParseQueryString(uri.Query).ToDictionary();
 		}
 		#endregion
 
