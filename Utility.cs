@@ -15,6 +15,8 @@ using System.Diagnostics;
 
 using Microsoft.Extensions.DependencyInjection;
 
+using Newtonsoft.Json.Linq;
+
 using net.vieapps.Components.Security;
 using net.vieapps.Components.WebSockets;
 #endregion
@@ -27,60 +29,9 @@ namespace net.vieapps.Components.Utility
 	public static partial class AspNetUtilityService
 	{
 
-		#region HTTP Response extensions
-		/// <summary>
-		/// Writes the array of bytes to HttpResponse Output Stream
-		/// </summary>
-		/// <param name="response"></param>
-		/// <param name="data"></param>
-		/// <param name="offset"></param>
-		/// <param name="count"></param>
-		public static void Write(this HttpResponse response, byte[] data, int offset = 0, int count = 0)
-		{
-			response.OutputStream.Write(data, offset > -1 ? offset : 0, count > 0 ? count : data.Length);
-		}
-
-		/// <summary>
-		/// Writes the array segment of bytes to HttpResponse Output Stream
-		/// </summary>
-		/// <param name="response"></param>
-		/// <param name="data"></param>
-		/// <returns></returns>
-		public static void Write(this HttpResponse response, ArraySegment<byte> data)
-		{
-			response.OutputStream.Write(data.Array, data.Offset, data.Count);
-		}
-
-		/// <summary>
-		/// Writes the array of bytes to HttpResponse Output Stream
-		/// </summary>
-		/// <param name="response"></param>
-		/// <param name="data"></param>
-		/// <param name="offset"></param>
-		/// <param name="count"></param>
-		/// <param name="cancellationToken"></param>
-		/// <returns></returns>
-		public static Task WriteAsync(this HttpResponse response, byte[] data, int offset = 0, int count = 0, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			return response.OutputStream.WriteAsync(data, offset > -1 ? offset : 0, count > 0 ? count : data.Length, cancellationToken);
-		}
-
-		/// <summary>
-		/// Writes the array segment of bytes to HttpResponse Output Stream
-		/// </summary>
-		/// <param name="response"></param>
-		/// <param name="data"></param>
-		/// <param name="cancellationToken"></param>
-		/// <returns></returns>
-		public static Task WriteAsync(this HttpResponse response, ArraySegment<byte> data, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			return response.OutputStream.WriteAsync(data.Array, data.Offset, data.Count, cancellationToken);
-		}
-		#endregion
-
-		#region Write a file to HTTP output stream directly
-		internal static long MinSmallFileSize = 1024 * 40;                             // 40 KB
-		internal static long MaxSmallFileSize = 1024 * 1024 * 2;                // 02 MB
+		#region Extension helpers
+		internal const long MinSmallFileSize = 1024 * 40;
+		internal const long MaxSmallFileSize = 1024 * 1024 * 2;
 
 		/// <summary>
 		/// Gets max length of body request
@@ -94,7 +45,12 @@ namespace net.vieapps.Components.Utility
 				: Int64.MaxValue;
 		}
 
-		static string GetRequestETag(HttpContext context)
+		/// <summary>
+		/// Gets the request ETag
+		/// </summary>
+		/// <param name="context"></param>
+		/// <returns></returns>
+		public static string GetRequestETag(this HttpContext context)
 		{
 			// IE or common browser
 			var requestETag = context.Request.Headers["If-Range"];
@@ -117,58 +73,199 @@ namespace net.vieapps.Components.Utility
 		}
 
 		/// <summary>
-		/// Writes the content of the file directly to output stream
+		/// Builds the approriate headers of response
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="filePath">The path to file</param>
-		/// <param name="contentType">The MIME type</param>
-		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
-		/// <param name="eTag">The entity tag</param>
-		/// <param name="cancellationToken">The cancellation token</param>
+		/// <param name="contentLength"></param>
+		/// <param name="contentType"></param>
+		/// <param name="contentEncoding"></param>
+		/// <param name="eTag"></param>
+		/// <param name="lastModified"></param>
+		/// <param name="correlationID"></param>
 		/// <returns></returns>
-		public static async Task WriteFileToOutputAsync(this HttpContext context, string filePath, string contentType, string eTag = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
+		public static Dictionary<string, string> BuildResponseHeaders(this HttpContext context, int contentLength, string contentType, string contentEncoding = null, string eTag = null, string lastModified = null, string correlationID = null)
 		{
-			await context.WriteFileToOutputAsync(new FileInfo(filePath), contentType, eTag, contentDisposition, cancellationToken).ConfigureAwait(false);
+			var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				{ "Server", "VIEApps NGX" },
+				{ "Content-Length", $"{contentLength}" },
+				{ "Content-Type", $"{contentType}; charset=utf-8" }
+			};
+
+			if (!string.IsNullOrWhiteSpace(contentEncoding))
+				headers.Add("Content-Encoding", contentEncoding);
+
+			if (!string.IsNullOrWhiteSpace(eTag))
+				headers.Add("ETag", $"\"{eTag}\"");
+
+			if (!string.IsNullOrWhiteSpace(lastModified))
+				headers.Add("Last-Modified", lastModified);
+
+			if (context.Items.Contains("PipelineStopwatch") && context.Items["PipelineStopwatch"] is Stopwatch stopwatch)
+			{
+				stopwatch.Stop();
+				headers.Add("X-Execution-Times", stopwatch.GetElapsedTimes());
+			}
+
+			if (!string.IsNullOrWhiteSpace(correlationID))
+				headers.Add("X-Correlation-ID", correlationID);
+
+			return headers;
 		}
 
 		/// <summary>
-		/// Writes the content of the file directly to output stream
+		/// Gets the approriate HTTP Status Code of the exception
+		/// </summary>
+		/// <param name="exception"></param>
+		/// <returns></returns>
+		public static int GetHttpStatusCode(this Exception exception)
+		{
+			if (exception is FileNotFoundException || exception is ServiceNotFoundException || exception is InformationNotFoundException)
+				return (int)HttpStatusCode.NotFound;
+
+			if (exception is AccessDeniedException)
+				return (int)HttpStatusCode.Forbidden;
+
+			if (exception is UnauthorizedException)
+				return (int)HttpStatusCode.Unauthorized;
+
+			if (exception is MethodNotAllowedException)
+				return (int)HttpStatusCode.MethodNotAllowed;
+
+			if (exception is InvalidRequestException)
+				return (int)HttpStatusCode.BadRequest;
+
+			if (exception is NotImplementedException)
+				return (int)HttpStatusCode.NotImplemented;
+
+			if (exception is ConnectionTimeoutException)
+				return (int)HttpStatusCode.RequestTimeout;
+
+			return (int)HttpStatusCode.InternalServerError;
+		}
+
+		/// <summary>
+		/// Gets the original Uniform Resource Identifier (URI) of the request that was sent by the client
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="fileInfo">The information of the file</param>
-		/// <param name="contentType">The MIME type</param>
-		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
-		/// <param name="eTag">The entity tag</param>
-		/// <param name="cancellationToken">The cancellation token</param>
 		/// <returns></returns>
-		public static async Task WriteFileToOutputAsync(this HttpContext context, FileInfo fileInfo, string contentType, string eTag = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
+		public static Uri GetRequestUri(this HttpContext context)
 		{
-			if (fileInfo == null || !fileInfo.Exists)
-				throw new FileNotFoundException("Not found" + (fileInfo != null ? " [" + fileInfo.Name + "]" : ""));
+			return context.Request.Url;
+		}
 
-			using (var stream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
+		/// <summary>
+		/// Parses the query of an uri
+		/// </summary>
+		/// <param name="uri"></param>
+		/// /// <param name="onCompleted">Action to run on parsing completed</param>
+		/// <returns>The collection of key and value pair</returns>
+		public static Dictionary<string, string> ParseQuery(this Uri uri, Action<Dictionary<string, string>> onCompleted = null)
+		{
+			var query = HttpUtility.ParseQueryString(uri.Query).ToDictionary();
+			onCompleted?.Invoke(query);
+			return query;
+		}
+
+		/// <summary>
+		/// Gets the requesting information
+		/// </summary>
+		/// <param name="context"></param>
+		/// <returns></returns>
+		public static Tuple<Uri, EndPoint, EndPoint> GetRequestInfo(this HttpContext context)
+		{
+			var uri = context.GetRequestUri();
+			var serviceProvider = context as IServiceProvider;
+			var httpWorker = serviceProvider?.GetService<HttpWorkerRequest>();
+			var remoteAddress = httpWorker == null ? context.Request.UserHostAddress : httpWorker.GetRemoteAddress();
+			var remotePort = httpWorker == null ? 0 : httpWorker.GetRemotePort();
+			var remoteEndpoint = IPAddress.TryParse(remoteAddress, out IPAddress ipAddress)
+				? new IPEndPoint(ipAddress, remotePort > 0 ? remotePort : uri.Port) as EndPoint
+				: new DnsEndPoint(context.Request.UserHostName, remotePort > 0 ? remotePort : uri.Port) as EndPoint;
+			var localAddress = httpWorker == null ? uri.Host : httpWorker.GetLocalAddress();
+			var localPort = httpWorker == null ? 0 : httpWorker.GetLocalPort();
+			var localEndpoint = IPAddress.TryParse(localAddress, out ipAddress)
+				? new IPEndPoint(ipAddress, localPort > 0 ? localPort : uri.Port) as EndPoint
+				: new DnsEndPoint(uri.Host, localPort > 0 ? localPort : uri.Port) as EndPoint;
+			return new Tuple<Uri, EndPoint, EndPoint>(uri, remoteEndpoint, localEndpoint);
+		}
+		#endregion
+
+		#region Flush response
+		/// <summary>
+		/// Sends all currently buffered output to the client
+		/// </summary>
+		/// <param name="context"></param>
+		public static void Flush(this HttpContext context)
+		{
+			context.Response.Flush();
+		}
+
+		/// <summary>
+		/// Asynchronously sends all currently buffered output to the client
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="cancellationToken"></param>
+		public static async Task FlushAsync(this HttpContext context, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.Response.ClientDisconnectedToken))
 			{
-				await context.WriteStreamToOutputAsync(stream, contentType, eTag, fileInfo.LastWriteTime.ToHttpString(), contentDisposition, 0, cancellationToken).ConfigureAwait(false);
+				await context.Response.OutputStream.FlushAsync(cts.Token).ConfigureAwait(false);
+			}
+		}
+		#endregion
+
+		#region Write binary data to the response body
+		/// <summary>
+		/// Writes binary data to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="buffer"></param>
+		/// <param name="offset"></param>
+		/// <param name="count"></param>
+		public static void Write(this HttpContext context, byte[] buffer, int offset = 0, int count = 0)
+		{
+			context.Response.OutputStream.Write(buffer, offset > -1 ? offset : 0, count > 0 ? count : buffer.Length);
+		}
+
+		/// <summary>
+		/// Writes binary data to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="buffer"></param>
+		/// <returns></returns>
+		public static void Write(this HttpContext context, ArraySegment<byte> buffer)
+		{
+			context.Response.OutputStream.Write(buffer.Array, buffer.Offset, buffer.Count);
+		}
+
+		/// <summary>
+		/// Writes binary data to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="buffer"></param>
+		/// <param name="offset"></param>
+		/// <param name="count"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static async Task WriteAsync(this HttpContext context, byte[] buffer, int offset = 0, int count = 0, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.Response.ClientDisconnectedToken))
+			{
+				await context.Response.OutputStream.WriteAsync(buffer, offset > -1 ? offset : 0, count > 0 ? count : buffer.Length, cts.Token).ConfigureAwait(false);
 			}
 		}
 
 		/// <summary>
-		/// Writes the binary data directly to output stream
+		/// Writes binary data to the response body
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="data">The data to write</param>
-		/// <param name="contentType">The MIME type</param>
-		/// <param name="eTag">The entity tag</param>
-		/// <param name="lastModified">The last-modified time in HTTP date-time format</param>
-		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
-		/// <param name="cancellationToken">The cancellation token</param>
+		/// <param name="buffer"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public static async Task WriteDataToOutputAsync(this HttpContext context, byte[] data, string contentType, string eTag = null, string lastModified = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
+		public static Task WriteAsync(this HttpContext context, ArraySegment<byte> buffer, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			using (var stream = new MemoryStream(data))
-			{
-				await context.WriteStreamToOutputAsync(stream, contentType, eTag, lastModified, contentDisposition, 0, cancellationToken).ConfigureAwait(false);
-			}
+			return context.WriteAsync(buffer.Array, buffer.Offset, buffer.Count, cancellationToken);
 		}
 
 		/// <summary>
@@ -183,7 +280,7 @@ namespace net.vieapps.Components.Utility
 		/// <param name="blockSize">Size of one block to write</param>
 		/// <param name="cancellationToken">The cancellation token</param>
 		/// <returns></returns>
-		public static async Task WriteStreamToOutputAsync(this HttpContext context, Stream stream, string contentType, string eTag = null, string lastModified = null, string contentDisposition = null, int blockSize = 0, CancellationToken cancellationToken = default(CancellationToken))
+		public static async Task WriteAsync(this HttpContext context, Stream stream, string contentType, string eTag = null, string lastModified = null, string contentDisposition = null, int blockSize = 0, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			// validate whether the file is too large
 			var totalBytes = stream.Length;
@@ -197,7 +294,7 @@ namespace net.vieapps.Components.Utility
 			// check ETag for supporting resumeable downloaders
 			if (!string.IsNullOrWhiteSpace(eTag))
 			{
-				var requestETag = AspNetUtilityService.GetRequestETag(context);
+				var requestETag = context.GetRequestETag();
 				if (!string.IsNullOrWhiteSpace(requestETag) && !eTag.Equals(requestETag))
 				{
 					context.Response.StatusCode = (int)HttpStatusCode.PreconditionFailed;
@@ -238,33 +335,31 @@ namespace net.vieapps.Components.Utility
 			}
 
 			// prepare headers
-			var headers = new List<string[]>();
+			var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				{ "Server", "VIEApps NGX" },
+				{ "Content-Length", $"{(endBytes - startBytes) + 1}" },
+				{ "Content-Type", $"{contentType}; charset=utf-8" }
+			};
 
-			if (!string.IsNullOrWhiteSpace(lastModified))
-				headers.Add(new string[] { "Last-Modified", lastModified });
+			if (flushAsPartialContent && startBytes > -1)
+				headers.Add("Content-Range", $"bytes {startBytes}-{endBytes}/{totalBytes}");
 
 			if (!string.IsNullOrWhiteSpace(eTag))
 			{
-				headers.Add(new string[] { "Accept-Ranges", "bytes" });
-				headers.Add(new string[] { "ETag", "\"" + eTag + "\"" });
+				headers.Add("Accept-Ranges", "bytes");
+				headers.Add("ETag", $"\"{eTag}\"");
 			}
 
-			if (flushAsPartialContent && startBytes > -1)
-				headers.Add(new string[] { "Content-Range", string.Format(" bytes {0}-{1}/{2}", startBytes, endBytes, totalBytes) });
-
-			headers.Add(new string[] { "Content-Length", ((endBytes - startBytes) + 1).ToString() });
+			if (!string.IsNullOrWhiteSpace(lastModified))
+				headers.Add("Last-Modified", lastModified);
 
 			if (!string.IsNullOrWhiteSpace(contentDisposition))
-				headers.Add(new string[] { "Content-Disposition", "Attachment; Filename=\"" + contentDisposition + "\"" });
+				headers.Add("Content-Disposition", $"Attachment; Filename=\"{contentDisposition}\"");
 
 			// flush headers to HttpResponse output stream
 			try
 			{
-				context.Response.Clear();
-				context.Response.Buffer = false;
-				context.Response.ContentEncoding = Encoding.UTF8;
-				context.Response.ContentType = contentType;
-
 				// status code of partial content
 				if (flushAsPartialContent)
 				{
@@ -272,15 +367,19 @@ namespace net.vieapps.Components.Utility
 					context.Response.StatusDescription = "Partial Content";
 				}
 
-				headers.ForEach(header => context.Response.Headers.Add(header[0], header[1]));
-
-				await context.Response.FlushAsync().WithCancellationToken(cancellationToken).ConfigureAwait(false);
+				headers.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
+				await context.FlushAsync(cancellationToken).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException)
+			{
+				return;
 			}
 			catch (HttpException ex)
 			{
 				var isDisconnected = ex.Message.Contains("0x800704CD") || ex.Message.Contains("0x800703E3") || ex.Message.Contains("The remote host closed the connection");
-				if (!isDisconnected)
-					throw ex;
+				if (isDisconnected)
+					return;
+				throw ex;
 			}
 			catch (Exception)
 			{
@@ -291,38 +390,21 @@ namespace net.vieapps.Components.Utility
 			if (!flushAsPartialContent && totalBytes <= AspNetUtilityService.MaxSmallFileSize)
 				try
 				{
-					var isDisconnected = false;
-					var data = new byte[totalBytes];
-					var readBytes = await stream.ReadAsync(data, 0, (int)totalBytes, cancellationToken).ConfigureAwait(false);
-					try
-					{
-						await context.Response.WriteAsync(data, 0, readBytes, cancellationToken).ConfigureAwait(false);
-					}
-					catch (OperationCanceledException)
-					{
-						isDisconnected = true;
-					}
-					catch (HttpException ex)
-					{
-						isDisconnected = ex.Message.Contains("0x800704CD") || ex.Message.Contains("0x800703E3") || ex.Message.Contains("The remote host closed the connection");
-						if (!isDisconnected)
-							throw ex;
-					}
-					catch (Exception ex)
-					{
-						throw ex;
-					}
-
-					// flush the written buffer to client and update cache
-					if (!isDisconnected)
-						try
-						{
-							await context.Response.FlushAsync().WithCancellationToken(cancellationToken).ConfigureAwait(false);
-						}
-						catch (Exception)
-						{
-							throw;
-						}
+					var buffer = new byte[totalBytes];
+					var readBytes = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+					await context.WriteAsync(buffer, 0, readBytes, cancellationToken).ConfigureAwait(false);
+					await context.FlushAsync(cancellationToken).ConfigureAwait(false);
+				}
+				catch (OperationCanceledException)
+				{
+					return;
+				}
+				catch (HttpException ex)
+				{
+					var isDisconnected = ex.Message.Contains("0x800704CD") || ex.Message.Contains("0x800703E3") || ex.Message.Contains("The remote host closed the connection");
+					if (isDisconnected)
+						return;
+					throw ex;
 				}
 				catch (Exception)
 				{
@@ -344,73 +426,98 @@ namespace net.vieapps.Components.Utility
 				stream.Seek(startBytes > 0 ? startBytes : 0, SeekOrigin.Begin);
 
 				// read and flush stream data to response stream
-				var isDisconnected = false;
+				var buffer = new byte[packSize];
 				var readBlocks = 0;
 				while (readBlocks < totalBlocks)
-				{
-					// the client is still connected
-					if (context.Response.IsClientConnected)
-						try
-						{
-							var buffer = new byte[packSize];
-							var readBytes = await stream.ReadAsync(buffer, 0, packSize, cancellationToken).ConfigureAwait(false);
-							if (readBytes > 0)
-							{
-								// write data to output stream
-								try
-								{
-									await context.Response.WriteAsync(buffer, 0, readBytes, cancellationToken).ConfigureAwait(false);
-								}
-								catch (OperationCanceledException)
-								{
-									isDisconnected = true;
-									break;
-								}
-								catch (HttpException ex)
-								{
-									isDisconnected = ex.Message.Contains("0x800704CD") || ex.Message.Contains("0x800703E3") || ex.Message.Contains("The remote host closed the connection");
-									if (!isDisconnected)
-										throw ex;
-									else
-										break;
-								}
-								catch (Exception)
-								{
-									throw;
-								}
-
-								// flush the written buffer to client
-								if (!isDisconnected)
-									try
-									{
-										await context.Response.FlushAsync().WithCancellationToken(cancellationToken).ConfigureAwait(false);
-									}
-									catch (Exception ex)
-									{
-										throw ex;
-									}
-							}
-							readBlocks++;
-						}
-						catch (Exception ex)
-						{
-							throw ex;
-						}
-
-					// the client is disconnected
-					else
+					try
 					{
-						isDisconnected = true;
-						break;
+						var readBytes = await stream.ReadAsync(buffer, 0, packSize, cancellationToken).ConfigureAwait(false);
+						if (readBytes > 0)
+						{
+							await context.WriteAsync(buffer, 0, readBytes, cancellationToken).ConfigureAwait(false);
+							await context.FlushAsync(cancellationToken).ConfigureAwait(false);
+						}
+						readBlocks++;
 					}
-				}
+					catch (OperationCanceledException)
+					{
+						return;
+					}
+					catch (HttpException ex)
+					{
+						var isDisconnected = ex.Message.Contains("0x800704CD") || ex.Message.Contains("0x800703E3") || ex.Message.Contains("The remote host closed the connection");
+						if (isDisconnected)
+							return;
+						throw ex;
+					}
+					catch (Exception)
+					{
+						throw;
+					}
+			}
+		}
+
+		/// <summary>
+		/// Writes the binary data directly to output stream
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="buffer">The data to write</param>
+		/// <param name="contentType">The MIME type</param>
+		/// <param name="eTag">The entity tag</param>
+		/// <param name="lastModified">The last-modified time in HTTP date-time format</param>
+		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
+		/// <param name="cancellationToken">The cancellation token</param>
+		/// <returns></returns>
+		public static async Task WriteAsync(this HttpContext context, byte[] buffer, string contentType, string eTag = null, string lastModified = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			using (var stream = buffer.ToMemoryStream())
+			{
+				await context.WriteAsync(stream, contentType, eTag, lastModified, contentDisposition, 0, cancellationToken).ConfigureAwait(false);
 			}
 		}
 		#endregion
 
-		#region Write a data-set as Excel document to HTTP output stream directly
+		#region Write a file to the response body
 		/// <summary>
-		/// Writes a data-set as Excel document to HTTP output stream directly
+		/// Writes the content of a file to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="fileInfo">The information of the file</param>
+		/// <param name="contentType">The MIME type</param>
+		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
+		/// <param name="eTag">The entity tag</param>
+		/// <param name="cancellationToken">The cancellation token</param>
+		/// <returns></returns>
+		public static async Task WriteAsync(this HttpContext context, FileInfo fileInfo, string contentType, string eTag = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			if (fileInfo == null || !fileInfo.Exists)
+				throw new FileNotFoundException("Not found" + (fileInfo != null ? " [" + fileInfo.Name + "]" : ""));
+
+			using (var stream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
+			{
+				await context.WriteAsync(stream, contentType, eTag, fileInfo.LastWriteTime.ToHttpString(), contentDisposition, 0, cancellationToken).ConfigureAwait(false);
+			}
+		}
+
+		/// <summary>
+		/// Writes the content of the file directly to output stream
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="filePath">The path to file</param>
+		/// <param name="contentType">The MIME type</param>
+		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
+		/// <param name="eTag">The entity tag</param>
+		/// <param name="cancellationToken">The cancellation token</param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpContext context, string filePath, string contentType, string eTag = null, string contentDisposition = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return context.WriteAsync(new FileInfo(filePath), contentType, eTag, contentDisposition, cancellationToken);
+		}
+		#endregion
+
+		#region Write a data-set as Excel document to the response body
+		/// <summary>
+		/// Writes a data-set as Excel document to to the response body
 		/// </summary>
 		/// <param name="context"></param>
 		/// <param name="dataSet"></param>
@@ -422,7 +529,7 @@ namespace net.vieapps.Components.Utility
 			using (var stream = await dataSet.SaveAsExcelAsync(cancellationToken).ConfigureAwait(false))
 			{
 				filename = filename ?? dataSet.Tables[0].TableName + ".xlsx";
-				await context.WriteStreamToOutputAsync(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", null, null, filename, TextFileReader.BufferSize, cancellationToken).ConfigureAwait(false);
+				await context.WriteAsync(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", null, null, filename, TextFileReader.BufferSize, cancellationToken).ConfigureAwait(false);
 			}
 		}
 
@@ -439,178 +546,252 @@ namespace net.vieapps.Components.Utility
 		}
 		#endregion
 
-		#region Write a text content to HTTP output stream
+		#region Write text data to the response body
 		/// <summary>
-		/// Gets the approriate headers
+		/// Writes the given text to the response body
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="contentLength"></param>
-		/// <param name="contentType"></param>
-		/// <param name="contentEncoding"></param>
-		/// <param name="eTag"></param>
-		/// <param name="lastModified"></param>
-		/// <param name="correlationID"></param>
+		/// <param name="text"></param>
+		/// <param name="encoding"></param>
+		public static void Write(this HttpContext context, string text, Encoding encoding = null)
+		{
+			context.Write(text.ToBytes(encoding));
+		}
+
+		/// <summary>
+		/// Writes the given text to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="text"></param>
+		/// <param name="encoding"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public static Dictionary<string, string> GetHeaders(this HttpContext context, int contentLength, string contentType, string contentEncoding = null, string eTag = null, string lastModified = null, string correlationID = null)
+		public static Task WriteAsync(this HttpContext context, string text, Encoding encoding = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-			{
-				{ "Server", "VIEApps NGX" },
-				{ "Content-Length", $"{contentLength}" },
-				{ "Content-Type", $"{contentType}; charset=utf-8" }
-			};
-
-			if (!string.IsNullOrWhiteSpace(contentEncoding))
-				headers.Add("Content-Encoding", contentEncoding);
-
-			if (!string.IsNullOrWhiteSpace(eTag) && !string.IsNullOrWhiteSpace(lastModified))
-			{
-				headers.Add("ETag", "\"" + eTag + "\"");
-				headers.Add("Last-Modified", lastModified);
-			}
-
-			if (context.Items.Contains("Stopwatch"))
-			{
-				(context.Items["Stopwatch"] as Stopwatch).Stop();
-				var executionTimes = (context.Items["Stopwatch"] as Stopwatch).GetElapsedTimes();
-				headers.Add("X-Execution-Times", executionTimes);
-			}
-
-			if (!string.IsNullOrWhiteSpace(correlationID))
-				headers.Add("X-Correlation-ID", correlationID);
-
-			return headers;
+			return context.WriteAsync(text.ToBytes(encoding).ToArraySegment(), cancellationToken);
 		}
 
 		/// <summary>
-		/// Writes a string content to HTTP output stream
+		/// Writes the given text to the response body
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="content"></param>
+		/// <param name="text"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpContext context, string text, CancellationToken cancellationToken)
+		{
+			return context.WriteAsync(text.ToBytes().ToArraySegment(), cancellationToken);
+		}
+
+		/// <summary>
+		/// Writes the given text to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="text"></param>
 		/// <param name="contentType"></param>
 		/// <param name="statusCode"></param>
 		/// <param name="eTag"></param>
 		/// <param name="lastModified"></param>
 		/// <param name="correlationID"></param>
-		public static void Write(this HttpContext context, string content, string contentType, int statusCode, string eTag, string lastModified, string correlationID = null)
+		public static void Write(this HttpContext context, string text, string contentType, int statusCode, string eTag, string lastModified, string correlationID = null)
 		{
-			var data = content.ToBytes();
+			var data = text.ToBytes();
 			var contentEncoding = context.Request.Headers["Accept-Encoding"];
-			if (contentEncoding != null && contentEncoding.IsEquals("*") || contentEncoding.IsContains("deflate"))
+			if (contentEncoding.IsEquals("*") || contentEncoding.IsContains("deflate"))
 			{
 				contentEncoding = "deflate";
 				data = data.Compress(contentEncoding);
 			}
-			else if (contentEncoding != null && contentEncoding.IsContains("gzip"))
+			else if (contentEncoding.IsContains("gzip"))
 			{
 				contentEncoding = "gzip";
 				data = data.Compress(contentEncoding);
 			}
 
 			// write headers
-			var headers = context.GetHeaders(data.Length, contentType, contentEncoding, eTag, lastModified, correlationID);
-			headers.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
+			context.BuildResponseHeaders(data.Length, contentType, contentEncoding, eTag, lastModified, correlationID).ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
 
 			// write details
 			context.Response.StatusCode = statusCode;
-			context.Response.ClearContent();
-			context.Response.Write(data);
+			context.Write(data);
 		}
 
 		/// <summary>
-		/// Writes a string content to HTTP output stream
+		/// Writes the given text to the response body
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="content"></param>
+		/// <param name="text"></param>
 		/// <param name="contentType"></param>
 		/// <param name="statusCode"></param>
 		/// <param name="correlationID"></param>
-		public static void Write(this HttpContext context, string content, string contentType, int statusCode, string correlationID = null)
+		public static void Write(this HttpContext context, string text, string contentType, int statusCode, string correlationID = null)
 		{
-			context.Write(content, contentType, statusCode, null, null, correlationID);
+			context.Write(text, contentType, statusCode, null, null, correlationID);
 		}
 
 		/// <summary>
-		/// Writes a string content to HTTP output stream
+		/// Writes the given text to the response body
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="content"></param>
+		/// <param name="text"></param>
 		/// <param name="contentType"></param>
 		/// <param name="statusCode"></param>
 		/// <param name="eTag"></param>
 		/// <param name="lastModified"></param>
 		/// <param name="correlationID"></param>
-		public static async Task WriteAsync(this HttpContext context, string content, string contentType, int statusCode, string eTag, string lastModified, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
+		public static async Task WriteAsync(this HttpContext context, string text, string contentType, int statusCode, string eTag, string lastModified, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var data = content.ToBytes();
+			var data = text.ToBytes();
 			var contentEncoding = context.Request.Headers["Accept-Encoding"];
-			if (contentEncoding != null && contentEncoding.IsEquals("*") || contentEncoding.IsContains("deflate"))
+			if (contentEncoding.IsEquals("*") || contentEncoding.IsContains("deflate"))
 			{
 				contentEncoding = "deflate";
 				data = data.Compress(contentEncoding);
 			}
-			else if (contentEncoding != null && contentEncoding.IsContains("gzip"))
+			else if (contentEncoding.IsContains("gzip"))
 			{
 				contentEncoding = "gzip";
 				data = data.Compress(contentEncoding);
 			}
 
 			// write headers
-			var headers = context.GetHeaders(data.Length, contentType, contentEncoding, eTag, lastModified, correlationID);
-			headers.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
+			context.BuildResponseHeaders(data.Length, contentType, contentEncoding, eTag, lastModified, correlationID).ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
 
 			// write details
 			context.Response.StatusCode = statusCode;
-			context.Response.ClearContent();
-			await context.Response.WriteAsync(data.ToArraySegment(), cancellationToken).ConfigureAwait(false);
+			await context.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
 		}
 
 		/// <summary>
-		/// Writes a string content to HTTP output stream
+		/// Writes the given text to the response body
 		/// </summary>
 		/// <param name="context"></param>
-		/// <param name="content"></param>
+		/// <param name="text"></param>
 		/// <param name="contentType"></param>
 		/// <param name="statusCode"></param>
 		/// <param name="correlationID"></param>
-		public static Task WriteAsync(this HttpContext context, string content, string contentType = "text/html", int statusCode = 200, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
+		public static Task WriteAsync(this HttpContext context, string text, string contentType = "text/html", int statusCode = 200, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			return context.WriteAsync(content, contentType, statusCode, null, null, correlationID, cancellationToken);
+			return context.WriteAsync(text, contentType, statusCode, null, null, correlationID, cancellationToken);
 		}
 		#endregion
 
-		#region Show HTTP Errors
+		#region Write JSON data to the response body
 		/// <summary>
-		/// Gets the approriate HTTP Status Code of the exception
+		/// Writes the JSON to the response body
 		/// </summary>
-		/// <param name="exception"></param>
-		/// <returns></returns>
-		public static int GetHttpStatusCode(this Exception exception)
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="encoding"></param>
+		public static void Write(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting = Newtonsoft.Json.Formatting.None, Encoding encoding = null)
 		{
-			if (exception is FileNotFoundException || exception is ServiceNotFoundException || exception is InformationNotFoundException)
-				return (int)HttpStatusCode.NotFound;
-
-			if (exception is AccessDeniedException)
-				return (int)HttpStatusCode.Forbidden;
-
-			if (exception is UnauthorizedException)
-				return (int)HttpStatusCode.Unauthorized;
-
-			if (exception is MethodNotAllowedException)
-				return (int)HttpStatusCode.MethodNotAllowed;
-
-			if (exception is InvalidRequestException)
-				return (int)HttpStatusCode.BadRequest;
-
-			if (exception is NotImplementedException)
-				return (int)HttpStatusCode.NotImplemented;
-
-			if (exception is ConnectionTimeoutException)
-				return (int)HttpStatusCode.RequestTimeout;
-
-			return (int)HttpStatusCode.InternalServerError;
+			context.Write((json?.ToString(formatting) ?? "{}").ToBytes(encoding));
 		}
 
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		public static void Write(this HttpContext context, JObject json)
+		{
+			context.Write(json, Newtonsoft.Json.Formatting.None, encoding: null);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="encoding"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting = Newtonsoft.Json.Formatting.None, Encoding encoding = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return context.WriteAsync((json?.ToString(formatting) ?? "{}").ToBytes(encoding).ToArraySegment(), cancellationToken);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting, CancellationToken cancellationToken)
+		{
+			return context.WriteAsync(json, formatting, encoding: null, cancellationToken: cancellationToken);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static Task WriteAsync(this HttpContext context, JObject json, CancellationToken cancellationToken)
+		{
+			return context.WriteAsync(json, Newtonsoft.Json.Formatting.None, cancellationToken);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="eTag"></param>
+		/// <param name="lastModified"></param>
+		/// <param name="correlationID"></param>
+		public static void Write(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting, string eTag, string lastModified, string correlationID = null)
+		{
+			context.Write(json?.ToString(formatting) ?? "{}", "application/json", (int)HttpStatusCode.OK, eTag, lastModified, correlationID);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="correlationID"></param>
+		public static void Write(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting = Newtonsoft.Json.Formatting.None, string correlationID = null)
+		{
+			context.Write(json, formatting, null, null, correlationID);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="eTag"></param>
+		/// <param name="lastModified"></param>
+		/// <param name="correlationID"></param>
+		public static Task WriteAsync(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting, string eTag, string lastModified, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return context.WriteAsync(json?.ToString(formatting) ?? "{}", "application/json", (int)HttpStatusCode.OK, eTag, lastModified, correlationID, cancellationToken);
+		}
+
+		/// <summary>
+		/// Writes the JSON to the response body
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="json"></param>
+		/// <param name="formatting"></param>
+		/// <param name="correlationID"></param>
+		public static Task WriteAsync(this HttpContext context, JObject json, Newtonsoft.Json.Formatting formatting = Newtonsoft.Json.Formatting.None, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return context.WriteAsync(json, formatting, null, null, correlationID, cancellationToken);
+		}
+		#endregion
+
+		#region Show HTTP Error as HTML
 		static string GetHttpErrorHtml(this HttpContext context, int statusCode, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
 		{
 			var html = "<!DOCTYPE html>\r\n" +
@@ -626,7 +807,7 @@ namespace net.vieapps.Components.Utility
 		}
 
 		/// <summary>
-		/// Show HTTP error
+		/// Shows HTTP error as HTML
 		/// </summary>
 		/// <param name="context"></param>
 		/// <param name="statusCode"></param>
@@ -638,15 +819,13 @@ namespace net.vieapps.Components.Utility
 		public static void ShowHttpError(this HttpContext context, int statusCode, string message, string type, string correlationID = null, string stack = null, bool showStack = true)
 		{
 			statusCode = statusCode < 1 ? (int)HttpStatusCode.InternalServerError : statusCode;
-			context.Response.TrySkipIisCustomErrors = true;
-			context.Response.Cache.SetNoStore();
 			context.Write(context.GetHttpErrorHtml(statusCode, message, type, correlationID, stack, showStack), "text/html", statusCode, correlationID);
 			if (message.IsContains("potentially dangerous"))
 				context.Response.End();
 		}
 
 		/// <summary>
-		/// Show HTTP error
+		/// Shows HTTP error as HTML
 		/// </summary>
 		/// <param name="context"></param>
 		/// <param name="statusCode"></param>
@@ -674,7 +853,7 @@ namespace net.vieapps.Components.Utility
 		}
 
 		/// <summary>
-		/// Show HTTP error
+		/// Shows HTTP error as HTML
 		/// </summary>
 		/// <param name="context"></param>
 		/// <param name="statusCode"></param>
@@ -687,15 +866,13 @@ namespace net.vieapps.Components.Utility
 		public static async Task ShowHttpErrorAsync(this HttpContext context, int statusCode, string message, string type, string correlationID = null, string stack = null, bool showStack = true, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			statusCode = statusCode < 1 ? (int)HttpStatusCode.InternalServerError : statusCode;
-			context.Response.TrySkipIisCustomErrors = true;
-			context.Response.Cache.SetNoStore();
 			await context.WriteAsync(context.GetHttpErrorHtml(statusCode, message, type, correlationID, stack, showStack), "text/html", statusCode, correlationID, cancellationToken).ConfigureAwait(false);
 			if (message.IsContains("potentially dangerous"))
 				context.Response.End();
 		}
 
 		/// <summary>
-		/// Show HTTP error
+		/// Shows HTTP error as HTML
 		/// </summary>
 		/// <param name="context"></param>
 		/// <param name="statusCode"></param>
@@ -724,51 +901,194 @@ namespace net.vieapps.Components.Utility
 		}
 		#endregion
 
-		#region Wrap a WebSocket connection of ASP.NET into WebSocket component
-		/// <summary>
-		/// Wraps a WebSocket connection
-		/// </summary>
-		/// <param name="websocket"></param>
-		/// <param name="context"></param>
-		/// <returns></returns>
-		public static Task WrapAsync(this WebSocket websocket, AspNetWebSocketContext context)
+		#region Write HTTP Error as JSON
+		static JObject GetHttpErrorJson(this HttpContext context, int statusCode, string message, string type, string correlationID = null, JObject stack = null, bool showStack = true)
 		{
-			var serviceProvider = (IServiceProvider)HttpContext.Current;
-			var httpWorker = serviceProvider?.GetService<HttpWorkerRequest>();
-			var remoteAddress = httpWorker == null ? context.UserHostAddress : httpWorker.GetRemoteAddress();
-			var remotePort = httpWorker == null ? 0 : httpWorker.GetRemotePort();
-			var remoteEndpoint = IPAddress.TryParse(remoteAddress, out IPAddress ipAddress)
-				? new IPEndPoint(ipAddress, remotePort > 0 ? remotePort : context.RequestUri.Port) as EndPoint
-				: new DnsEndPoint(context.UserHostName, remotePort > 0 ? remotePort : context.RequestUri.Port) as EndPoint;
-			var localAddress = httpWorker == null ? context.RequestUri.Host : httpWorker.GetLocalAddress();
-			var localPort = httpWorker == null ? 0 : httpWorker.GetLocalPort();
-			var localEndpoint = IPAddress.TryParse(localAddress, out ipAddress)
-				? new IPEndPoint(ipAddress, localPort > 0 ? localPort : context.RequestUri.Port) as EndPoint
-				: new DnsEndPoint(context.RequestUri.Host, localPort > 0 ? localPort : context.RequestUri.Port) as EndPoint;
-			return websocket.WrapAsync(context.WebSocket, context.RequestUri, remoteEndpoint, localEndpoint);
+			var json = new JObject()
+			{
+				{ "Message", message },
+				{ "Type", type },
+				{ "Code", statusCode }
+			};
+
+			if (!string.IsNullOrWhiteSpace(correlationID))
+				json["CorrelationID"] = correlationID;
+
+			if (stack != null && showStack)
+				json["Stack"] = stack;
+
+			return json;
 		}
 
 		/// <summary>
-		/// Wraps a WebSocket connection
+		/// Writes HTTP error as JSON
 		/// </summary>
-		/// <param name="websocket"></param>
 		/// <param name="context"></param>
-		/// <returns></returns>
-		public static Task WrapWebSocketAsync(this WebSocket websocket, AspNetWebSocketContext context)
+		/// <param name="statusCode"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="stack"></param>
+		/// <param name="showStack"></param>
+		public static void WriteHttpError(this HttpContext context, int statusCode, string message, string type, string correlationID = null, JObject stack = null, bool showStack = true)
 		{
-			return websocket.WrapAsync(context);
+			statusCode = statusCode < 1 ? (int)HttpStatusCode.InternalServerError : statusCode;
+			context.Write(context.GetHttpErrorJson(statusCode, message, type, correlationID, stack, showStack).ToString(Newtonsoft.Json.Formatting.Indented), "application/json", statusCode, correlationID);
+			if (message.IsContains("potentially dangerous"))
+				context.Response.End();
+		}
+
+		/// <summary>
+		/// Writes HTTP error as JSON
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="ex"></param>
+		/// <param name="showStack"></param>
+		public static void WriteHttpError(this HttpContext context, int statusCode, string message, string type, string correlationID, Exception ex, bool showStack = true)
+		{
+			JObject stack = null;
+			if (ex != null && showStack)
+			{
+				stack = new JObject()
+				{
+					{ "Stack", ex.StackTrace }
+				};
+				var inners = new JArray();
+				var counter = 1;
+				var inner = ex.InnerException;
+				while (inner != null)
+				{
+					inners.Add(new JObject()
+					{
+						{ $"Inner_{counter}", inner.StackTrace }
+					});
+					inner = inner.InnerException;
+					counter++;
+				}
+				if (inners.Count > 0)
+					stack["Inners"] = inners;
+			}
+			context.WriteHttpError(statusCode, message, type, correlationID, stack, showStack);
+		}
+
+		/// <summary>
+		/// Writes HTTP error as JSON
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="stack"></param>
+		/// <param name="showStack"></param>
+		/// <param name="cancellationToken"></param>
+		public static async Task WriteHttpErrorAsync(this HttpContext context, int statusCode, string message, string type, string correlationID = null, JObject stack = null, bool showStack = true, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			statusCode = statusCode < 1 ? (int)HttpStatusCode.InternalServerError : statusCode;
+			await context.WriteAsync(context.GetHttpErrorJson(statusCode, message, type, correlationID, stack, showStack).ToString(Newtonsoft.Json.Formatting.Indented), "application/json", statusCode, correlationID, cancellationToken).ConfigureAwait(false);
+			if (message.IsContains("potentially dangerous"))
+				context.Response.End();
+		}
+
+		/// <summary>
+		/// Writes HTTP error as JSON
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="statusCode"></param>
+		/// <param name="message"></param>
+		/// <param name="type"></param>
+		/// <param name="correlationID"></param>
+		/// <param name="ex"></param>
+		/// <param name="showStack"></param>
+		/// <param name="cancellationToken"></param>
+		public static Task WriteHttpErrorAsync(this HttpContext context, int statusCode, string message, string type, string correlationID, Exception ex, bool showStack = true, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			JObject stack = null;
+			if (ex != null && showStack)
+			{
+				stack = new JObject()
+				{
+					{ "Stack", ex.StackTrace }
+				};
+				var inners = new JArray();
+				var counter = 1;
+				var inner = ex.InnerException;
+				while (inner != null)
+				{
+					inners.Add(new JObject()
+					{
+						{ $"Inner_{counter}", inner.StackTrace }
+					});
+					inner = inner.InnerException;
+					counter++;
+				}
+				if (inners.Count > 0)
+					stack["Inners"] = inners;
+			}
+			return context.WriteHttpErrorAsync(statusCode, message, type, correlationID, stack, showStack, cancellationToken);
 		}
 		#endregion
 
-		#region Parse the query string of an uri
+		#region Wrap a WebSocket connection of ASP.NET into WebSocket component
 		/// <summary>
-		/// Parses the query of an uri
+		/// Wraps a WebSocket connection of ASP.NET
 		/// </summary>
-		/// <param name="uri"></param>
-		/// <returns>The collection of key and value pair</returns>
-		public static Dictionary<string, string> ParseQuery(this Uri uri)
+		/// <param name="websocket"></param>
+		/// <param name="httpContext"></param>
+		/// <param name="whenIsNotWebSocketRequest"></param>
+		/// <returns></returns>
+		public static void Wrap(this WebSocket websocket, HttpContext httpContext, Action<HttpContext> whenIsNotWebSocketRequest = null)
 		{
-			return HttpUtility.ParseQueryString(uri.Query).ToDictionary();
+			if (httpContext.IsWebSocketRequest)
+				httpContext.AcceptWebSocketRequest(async (websocketContext) =>
+				{
+					var info = httpContext.GetRequestInfo();
+					await websocket.WrapAsync(websocketContext.WebSocket, info.Item1, info.Item2, info.Item3).ConfigureAwait(false);
+				});
+			else
+				whenIsNotWebSocketRequest?.Invoke(httpContext);
+		}
+
+		/// <summary>
+		/// Wraps a WebSocket connection of ASP.NET
+		/// </summary>
+		/// <param name="websocket"></param>
+		/// <param name="httpContext"></param>
+		/// <param name="whenIsNotWebSocketRequest"></param>
+		/// <returns></returns>
+		public static void WrapWebSocket(this WebSocket websocket, HttpContext httpContext, Action<HttpContext> whenIsNotWebSocketRequest = null)
+		{
+			websocket.Wrap(httpContext, whenIsNotWebSocketRequest);
+		}
+
+		/// <summary>
+		/// Wraps a WebSocket connection of ASP.NET
+		/// </summary>
+		/// <param name="websocket"></param>
+		/// <param name="websocketContext"></param>
+		/// <returns></returns>
+		public static Task WrapAsync(this WebSocket websocket, AspNetWebSocketContext websocketContext)
+		{
+			var httpContext = HttpContext.Current;
+			var info = httpContext != null
+				? httpContext.GetRequestInfo()
+				: new Tuple<Uri, EndPoint, EndPoint>(websocketContext.RequestUri, new DnsEndPoint(websocketContext.UserHostName, websocketContext.RequestUri.Port), null);
+			return websocket.WrapAsync(websocketContext.WebSocket, info.Item1, info.Item2, info.Item3);
+		}
+
+		/// <summary>
+		/// Wraps a WebSocket connection of ASP.NET
+		/// </summary>
+		/// <param name="websocket"></param>
+		/// <param name="websocketContext"></param>
+		/// <returns></returns>
+		public static Task WrapWebSocketAsync(this WebSocket websocket, AspNetWebSocketContext websocketContext)
+		{
+			return websocket.WrapAsync(websocketContext);
 		}
 		#endregion
 
