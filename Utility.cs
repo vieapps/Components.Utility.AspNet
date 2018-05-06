@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Data;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
@@ -84,10 +85,10 @@ namespace net.vieapps.Components.Utility
 		/// <param name="additionalHeaders"></param>
 		public static void SetResponseHeaders(this HttpContext context, int statusCode, string contentType, string eTag = null, string lastModified = null, string correlationID = null, Dictionary<string, string> additionalHeaders = null)
 		{
-			// status code
+			// update status code
 			context.Response.StatusCode = statusCode;
 
-			// headers
+			// prepare headers
 			var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 			{
 				{ "Server", "VIEApps NGX" },
@@ -103,14 +104,16 @@ namespace net.vieapps.Components.Utility
 			if (!string.IsNullOrWhiteSpace(correlationID))
 				headers.Add("X-Correlation-ID", correlationID);
 
-			headers.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
-			additionalHeaders?.ForEach(kvp => context.Response.Headers.Add(kvp.Key, kvp.Value));
+			additionalHeaders?.Where(kvp => !headers.ContainsKey(kvp.Key)).ForEach(kvp => headers[kvp.Key] = kvp.Value);
 
 			if (context.Items.Contains("PipelineStopwatch") && context.Items["PipelineStopwatch"] is Stopwatch stopwatch)
 			{
 				stopwatch.Stop();
-				context.Response.Headers.Add("X-Execution-Times", stopwatch.GetElapsedTimes());
+				headers.Add("X-Execution-Times", stopwatch.GetElapsedTimes());
 			}
+
+			// update headers
+			headers.ForEach(kvp => context.Response.Headers[kvp.Key] = kvp.Value);
 		}
 
 		/// <summary>

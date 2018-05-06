@@ -13,7 +13,7 @@ using net.vieapps.Components.Security;
 namespace net.vieapps.Components.Utility
 {
 	/// <summary>
-	/// Static servicing methods for working security in ASP.NET
+	/// Static servicing methods for working with user security in ASP.NET
 	/// </summary>
 	public static class AspNetSecurityService
 	{
