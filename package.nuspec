@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
 	<metadata>
 		<id>VIEApps.Components.Utility.AspNet</id>
-		<version>10.1.19.1805</version>
+		<version>10.2.1.1805</version>
 		<authors>VIEApps.net</authors>
 		<copyright>© 2018 VIEApps.net</copyright>
 		<title>VIEApps NGX Utility for ASP.NET</title>
@@ -10,14 +10,15 @@
 		<summary>The general purpose library for developing apps with ASP.NET</summary>
 		<tags>utility asp.net vieapps vieapps.components</tags>
 		<requireLicenseAcceptance>false</requireLicenseAcceptance>
-		<releaseNotes>Upgrade to latest components</releaseNotes>
+		<releaseNotes>Changes: update to new working models of user security base</releaseNotes>
 		<projectUrl>https://github.com/vieapps/Components.Utility.AspNet</projectUrl>
 		<repository type="git" url="https://github.com/vieapps/Components.Utility.AspNet" />
 		<dependencies>
 			<group targetFramework=".NETStandard2.0">
 				<dependency id="Microsoft.Extensions.DependencyInjection" version="2.0.0" exclude="Build,Analyzers" />
-				<dependency id="VIEApps.Components.Security" version="10.1.19.1805" exclude="Build,Analyzers" />
-				<dependency id="VIEApps.Components.WebSockets" version="10.1.19.1805" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.Security" version="10.2.1.1805" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.Utility" version="10.2.1.1805" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.WebSockets" version="10.2.0.1805" exclude="Build,Analyzers" />
 			</group>
 		</dependencies>
 	</metadata>
