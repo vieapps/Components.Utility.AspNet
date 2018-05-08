@@ -18,7 +18,7 @@
 				<dependency id="Microsoft.Extensions.DependencyInjection" version="2.0.0" exclude="Build,Analyzers" />
 				<dependency id="VIEApps.Components.Security" version="10.2.1.1805" exclude="Build,Analyzers" />
 				<dependency id="VIEApps.Components.Utility" version="10.2.1.1805" exclude="Build,Analyzers" />
-				<dependency id="VIEApps.Components.WebSockets" version="10.2.0.1805" exclude="Build,Analyzers" />
+				<dependency id="VIEApps.Components.WebSockets" version="10.2.1.1805" exclude="Build,Analyzers" />
 			</group>
 		</dependencies>
 	</metadata>

@@ -199,10 +199,7 @@ namespace net.vieapps.Components.Utility
 		/// Sends all currently buffered output to the client
 		/// </summary>
 		/// <param name="context"></param>
-		public static void Flush(this HttpContext context)
-		{
-			context.Response.OutputStream.Flush();
-		}
+		public static void Flush(this HttpContext context) => context.Response.OutputStream.Flush();
 
 		/// <summary>
 		/// Asynchronously sends all currently buffered output to the client
@@ -236,9 +233,15 @@ namespace net.vieapps.Components.Utility
 		/// <returns></returns>
 		public static byte[] Read(this HttpContext context)
 		{
-			var buffer = new byte[context.GetBodyRequestMaxLength()];
+			var data = new byte[0];
+			var buffer = new byte[TextFileReader.BufferSize];
 			var read = context.Request.InputStream.Read(buffer, 0, buffer.Length);
-			return buffer.Take(0, read);
+			while (read > 0)
+			{
+				data = data.Concat(buffer.Take(0, read));
+				read = context.Request.InputStream.Read(buffer, 0, buffer.Length);
+			}
+			return data;
 		}
 
 		/// <summary>
@@ -248,9 +251,15 @@ namespace net.vieapps.Components.Utility
 		/// <returns></returns>
 		public static async Task<byte[]> ReadAsync(this HttpContext context, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var buffer = new byte[context.GetBodyRequestMaxLength()];
+			var data = new byte[0];
+			var buffer = new byte[TextFileReader.BufferSize];
 			var read = await context.Request.InputStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
-			return buffer.Take(0, read);
+			while (read > 0)
+			{
+				data = data.Concat(buffer.Take(0, read));
+				read = await context.Request.InputStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+			}
+			return data;
 		}
 
 		/// <summary>
