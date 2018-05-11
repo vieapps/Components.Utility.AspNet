@@ -78,42 +78,55 @@ namespace net.vieapps.Components.Utility
 		/// </summary>
 		/// <param name="context"></param>
 		/// <param name="statusCode"></param>
+		/// <param name="headers"></param>
+		public static void SetResponseHeaders(this HttpContext context, int statusCode, Dictionary<string, string> headers = null)
+		{
+			context.Response.StatusCode = statusCode;
+			headers?.ForEach(kvp => context.Response.Headers[kvp.Key] = kvp.Value);
+			context.Response.Headers["Server"] = "VIEApps NGX";
+			if (context.Items.Contains("PipelineStopwatch") && context.Items["PipelineStopwatch"] is Stopwatch stopwatch)
+			{
+				stopwatch.Stop();
+				context.Response.Headers["X-Execution-Times"] = stopwatch.GetElapsedTimes();
+			}
+		}
+
+		/// <summary>
+		/// Sets the approriate headers of response
+		/// </summary>
+		/// <param name="context"></param>
+		/// <param name="statusCode"></param>
 		/// <param name="contentType"></param>
 		/// <param name="eTag"></param>
 		/// <param name="lastModified"></param>
 		/// <param name="correlationID"></param>
 		/// <param name="additionalHeaders"></param>
-		public static void SetResponseHeaders(this HttpContext context, int statusCode, string contentType, string eTag = null, string lastModified = null, string correlationID = null, Dictionary<string, string> additionalHeaders = null)
+		public static void SetResponseHeaders(this HttpContext context, int statusCode, string contentType, string eTag, long lastModified, string cacheControl, TimeSpan expires, string correlationID = null, Dictionary<string, string> additionalHeaders = null)
 		{
-			// update status code
-			context.Response.StatusCode = statusCode;
+			// prepare
+			var headers = new Dictionary<string, string>(additionalHeaders ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
 
-			// prepare headers
-			var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-			{
-				{ "Server", "VIEApps NGX" },
-				{ "Content-Type", $"{contentType}; charset=utf-8" }
-			};
+			if (!string.IsNullOrWhiteSpace(contentType))
+				headers["Content-Type"] = $"{contentType}; charset=utf-8";
 
 			if (!string.IsNullOrWhiteSpace(eTag))
-				headers.Add("ETag", $"\"{eTag}\"");
+				headers["ETag"] = $"\"{eTag}\"";
 
-			if (!string.IsNullOrWhiteSpace(lastModified))
-				headers.Add("Last-Modified", lastModified);
+			if (lastModified > 0)
+				headers["Last-Modified"] = lastModified.FromUnixTimestamp().ToHttpString();
 
-			if (!string.IsNullOrWhiteSpace(correlationID))
-				headers.Add("X-Correlation-ID", correlationID);
-
-			additionalHeaders?.Where(kvp => !headers.ContainsKey(kvp.Key)).ForEach(kvp => headers[kvp.Key] = kvp.Value);
-
-			if (context.Items.Contains("PipelineStopwatch") && context.Items["PipelineStopwatch"] is Stopwatch stopwatch)
+			if (!string.IsNullOrWhiteSpace(cacheControl))
 			{
-				stopwatch.Stop();
-				headers.Add("X-Execution-Times", stopwatch.GetElapsedTimes());
+				headers["Cache-Control"] = cacheControl;
+				if (expires != default(TimeSpan) && expires.Ticks > 0)
+					headers["Expires"] = lastModified.FromUnixTimestamp().Add(expires).ToHttpString();
 			}
 
-			// update headers
-			headers.ForEach(kvp => context.Response.Headers[kvp.Key] = kvp.Value);
+			if (!string.IsNullOrWhiteSpace(correlationID))
+				headers["X-Correlation-ID"] = correlationID;
+
+			// update
+			context.SetResponseHeaders(statusCode, headers);
 		}
 
 		/// <summary>
@@ -348,13 +361,14 @@ namespace net.vieapps.Components.Utility
 		/// <param name="context"></param>
 		/// <param name="stream">The stream to write</param>
 		/// <param name="contentType">The MIME type</param>
-		/// <param name="eTag">The entity tag</param>
-		/// <param name="lastModified">The last-modified time in HTTP date-time format</param>
 		/// <param name="contentDisposition">The string that presents name of attachment file, let it empty/null for writting showing/displaying (not for downloading attachment file)</param>
-		/// <param name="blockSize">Size of one block to write</param>
+		/// <param name="eTag">The entity tag</param>
+		/// <param name="lastModified">The Unix timestamp that presents last-modified time</param>
+		/// <param name="cacheControl">The string that presents cache control ('public', 'private', 'no-store')</param>
+		/// <param name="expires">The timespan that presents expires time of cache</param>
 		/// <param name="cancellationToken">The cancellation token</param>
 		/// <returns></returns>
-		public static async Task WriteAsync(this HttpContext context, Stream stream, string contentType, string eTag = null, string lastModified = null, string contentDisposition = null, int blockSize = 0, CancellationToken cancellationToken = default(CancellationToken))
+		public static async Task WriteAsync(this HttpContext context, Stream stream, string contentType, string contentDisposition = null, string eTag = null, long lastModified = 0, string cacheControl = null, TimeSpan expires = default(TimeSpan), CancellationToken cancellationToken = default(CancellationToken))
 		{
 			// validate whether the file is too large
 			var totalBytes = stream.Length;
@@ -426,7 +440,7 @@ namespace net.vieapps.Components.Utility
 			// update headers
 			try
 			{
-				context.SetResponseHeaders(flushAsPartialContent ? (int)HttpStatusCode.PartialContent : (int)HttpStatusCode.OK, contentType, eTag, lastModified, null, headers);
+				context.SetResponseHeaders(flushAsPartialContent ? (int)HttpStatusCode.PartialContent : (int)HttpStatusCode.OK, contentType, eTag, lastModified, cacheControl, expires, null, headers);
 				if (flushAsPartialContent)
 					context.Response.StatusDescription = "Partial Content";
 				await context.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -474,9 +488,7 @@ namespace net.vieapps.Components.Utility
 			else
 			{
 				// prepare blocks for writing
-				var packSize = blockSize > 0
-					? blockSize
-					: (int)AspNetUtilityService.MinSmallFileSize;
+				var packSize = (int)AspNetUtilityService.MinSmallFileSize;
 				if (packSize > (endBytes - startBytes))
 					packSize = (int)(endBytes - startBytes) + 1;
 				var totalBlocks = (int)Math.Ceiling((endBytes - startBytes + 0.0) / packSize);
